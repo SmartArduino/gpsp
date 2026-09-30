@@ -76,6 +76,11 @@ typedef struct
   u32 next_entry;
 } hashhdr_type;
 
+#ifdef ESP32S31_PORT
+#include "esp_attr.h"
+#include "esp32s31_jit.h"
+EXT_RAM_BSS_ATTR
+#endif
 u32 rom_branch_hash[ROM_BRANCH_HASH_SIZE];
 
 typedef struct
@@ -213,7 +218,9 @@ typedef struct
   u32 offset = opcode & 0x07FF                                                \
 
 /* Include the right emitter headers */
-#if defined(MIPS_ARCH)
+#if defined(RISCV_ARCH)
+  #include "riscv/riscv_emit.h"
+#elif defined(MIPS_ARCH)
   #include "mips/mips_emit.h"
 #elif defined(ARM_ARCH)
   #include "arm/arm_emit.h"
@@ -221,6 +228,10 @@ typedef struct
   #include "arm/arm64_emit.h"
 #else
   #include "x86/x86_emit.h"
+#endif
+
+#ifndef mark_jit_dirty
+#define mark_jit_dirty(start, end) ((void)0)
 #endif
 
 /* Cache invalidation */
@@ -252,21 +263,43 @@ typedef struct
   void platform_cache_sync(void *baseaddr, void *endptr) {
     __builtin___clear_cache(baseaddr, endptr);
   }
+#elif defined(RISCV_ARCH)
+  void platform_cache_sync(void *baseaddr, void *endptr) {
+    gpsp_jit_cache_sync(baseaddr, endptr);
+  }
 #else
   /* x86 CPUs have icache consistency checks */
   void platform_cache_sync(void *baseaddr, void *endptr) {}
 #endif
 
 void translate_icache_sync() {
+#if defined(ESP32S31_PORT) && GPSP_JIT_DIRTY_SYNC
+    if (last_rom_translation_ptr < rom_translation_ptr)
+        gpsp_jit_mark_dirty(last_rom_translation_ptr, rom_translation_ptr);
+    if (last_ram_translation_ptr < ram_translation_ptr)
+        gpsp_jit_mark_dirty(last_ram_translation_ptr, ram_translation_ptr);
+    last_rom_translation_ptr = rom_translation_ptr;
+    last_ram_translation_ptr = ram_translation_ptr;
+    gpsp_jit_publish_dirty();
+#else
     // Cache emitted code can only grow
     if (last_rom_translation_ptr < rom_translation_ptr) {
+#ifdef RISCV_ARCH
+        platform_cache_sync(rom_translation_cache, rom_translation_ptr);
+#else
         platform_cache_sync(last_rom_translation_ptr, rom_translation_ptr);
+#endif
         last_rom_translation_ptr = rom_translation_ptr;
     }
     if (last_ram_translation_ptr < ram_translation_ptr) {
+#ifdef RISCV_ARCH
+        platform_cache_sync(ram_translation_cache, ram_translation_ptr);
+#else
         platform_cache_sync(last_ram_translation_ptr, ram_translation_ptr);
+#endif
         last_ram_translation_ptr = ram_translation_ptr;
     }
+#endif
 }
 
 /* End of Cache invalidation */
@@ -2653,6 +2686,7 @@ u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
         trentry = get_ram_tag(*tagp);                                         \
         trentry->offset_arm = 0;                                              \
         trentry->offset_thumb = 0;                                            \
+        mark_jit_dirty(trentry, (u8 *)trentry + sizeof(*trentry));             \
       } else {                                                                \
         trentry = get_ram_tag(*tagp);                                         \
       }                                                                       \
@@ -2661,6 +2695,7 @@ u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
         bool result;                                                          \
         u8 *blkptr = ram_translation_ptr + block_prologue_size;               \
         trentry->offset_##type = blkptr - ram_translation_cache;              \
+        mark_jit_dirty(trentry, (u8 *)trentry + sizeof(*trentry));             \
         translate_depth++;                                                    \
         result = translate_block_##type(pc, true);                            \
         if (result && translate_depth == 1)                                   \
@@ -2706,6 +2741,7 @@ u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
         bhdr->pc_value = key;                                                 \
         bhdr->next_entry = 0;                                                 \
         *blk_offset_addr = (u32)(rom_translation_ptr - rom_translation_cache);\
+        mark_jit_dirty(blk_offset_addr, (u8 *)blk_offset_addr + sizeof(u32));   \
         rom_translation_ptr += sizeof(hashhdr_type);                          \
         blkptr = rom_translation_ptr + block_prologue_size;                   \
         translate_depth++;                                                    \
@@ -3513,4 +3549,3 @@ void flush_dynarec_caches(void)
   iwram_code_max = 0x8000;
   flush_translation_cache_ram();
 }
-

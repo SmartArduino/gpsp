@@ -675,7 +675,7 @@ bool sound_read_savestate(const u8 *src)
   int i;
   const u8 *snddoc = bson_find_key(src, "sound");
 
-  /* The 256KiB ring buffer holding rendered samples is intentionally not
+  /* The ring buffer holding rendered samples is intentionally not
    * serialized (it would inflate the savestate well beyond its hard size
    * cap). Zero it on load so that the gbc_sound and direct_sound mixers,
    * which use += into this buffer, do not pick up stale data from before
@@ -698,6 +698,9 @@ bool sound_read_savestate(const u8 *src)
     bson_read_bytes(snddoc, "wav-samples", wave_samples, sizeof(wave_samples))))
     return false;
 
+  sound_buffer_base &= BUFFER_SIZE_MASK;
+  gbc_sound_buffer_index &= BUFFER_SIZE_MASK;
+
   for (i = 0; i < 2; i++)
   {
     direct_sound_struct *ds = &direct_sound_channel[i];
@@ -712,6 +715,7 @@ bool sound_read_savestate(const u8 *src)
       bson_read_bytes(sndchan, "fifo-bytes", ds->fifo, sizeof(ds->fifo)) &&
       bson_read_int32(sndchan, "buf-idx", &ds->buffer_index)))
       return false;
+    ds->buffer_index &= BUFFER_SIZE_MASK;
   }
 
   for (i = 0; i < 4; i++)

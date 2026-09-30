@@ -1493,13 +1493,26 @@ u8 *memory_map_read [8 * 1024];
 u16 oam_ram[512];
 u16 palette_ram[512];
 u16 palette_ram_converted[512];
+#ifdef ESP32S31_PORT
+#include "esp_attr.h"
+EXT_RAM_BSS_ATTR u8 ewram[1024 * 256 * 2];
+#else
 u8 ewram[1024 * 256 * 2];
+#endif
 u8 iwram[1024 * 32 * 2];
+#ifdef ESP32S31_PORT
+EXT_RAM_BSS_ATTR u8 vram[1024 * 96];
+#else
 u8 vram[1024 * 96];
+#endif
 u16 io_registers[512];
 #endif
 
+#if defined(ESP32S31_PORT) && !defined(HAVE_DYNAREC)
+static u32 IRAM_ATTR execute_arm_internal(u32 cycles, bool vram_only)
+#else
 static u32 execute_arm_internal(u32 cycles, bool vram_only)
+#endif
 {
   u32 opcode;
   u32 condition;

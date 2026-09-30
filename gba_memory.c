@@ -357,7 +357,13 @@ const u32 def_seq_cycles[16][2] =
 u8 bios_rom[1024 * 16];
 
 // Up to 128kb, store SRAM, flash ROM, or EEPROM here.
+#ifdef ESP32S31_PORT
+#include "esp_attr.h"
+#include "esp_heap_caps.h"
+EXT_RAM_BSS_ATTR u8 gamepak_backup[1024 * 128];
+#else
 u8 gamepak_backup[1024 * 128];
+#endif
 
 u32 dma_bus_val;
 dma_transfer_type dma[4];
@@ -1727,17 +1733,26 @@ void function_cc write_gpio(u32 address, u32 value) {
 
 #define write_gpio32()                                                        \
 
+#if defined(HAVE_DYNAREC) && defined(RISCV_ARCH)
+#define check_riscv_smc(base, offset, type)                                    \
+  if (dynarec_enable && address##type(base, offset)) return CPU_ALERT_SMC
+#else
+#define check_riscv_smc(base, offset, type)
+#endif
+
 #define write_memory(type)                                                    \
   switch(address >> 24)                                                       \
   {                                                                           \
     case 0x02:                                                                \
       /* external work RAM */                                                 \
       address##type(ewram, (address & 0x3FFFF)) = eswap##type(value);         \
+      check_riscv_smc(ewram, (address & 0x3FFFF) + 0x40000, type);            \
       break;                                                                  \
                                                                               \
     case 0x03:                                                                \
       /* internal work RAM */                                                 \
       address##type(iwram, (address & 0x7FFF) + 0x8000) = eswap##type(value); \
+      check_riscv_smc(iwram, address & 0x7FFF, type);                        \
       break;                                                                  \
                                                                               \
     case 0x04:                                                                \
@@ -2540,7 +2555,11 @@ void init_gamepak_buffer(void)
   gamepak_buffer_count = 0;
   while (gamepak_buffer_count < ROM_BUFFER_SIZE)
   {
+#ifdef ESP32S31_PORT
+    void *ptr = heap_caps_malloc(gamepak_buffer_blocksize, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#else
     void *ptr = malloc(gamepak_buffer_blocksize);
+#endif
     if (!ptr)
       break;
     gamepak_buffers[gamepak_buffer_count++] = (u8*)ptr;

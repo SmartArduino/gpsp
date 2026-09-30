@@ -22,7 +22,7 @@
 // ARM32 has a +/- 32MB offset requirement (gpsp does not require this).
 // MIPS requires blocks to be within the same 256MB boundary (identical 4 MSB)
 
-#ifdef MMAP_JIT_CACHE
+#if defined(MMAP_JIT_CACHE) && !(defined(ESP32S31_PORT) && defined(RISCV_ARCH))
 
 // JIT block requirements translated to allocation code.
 #if defined(MIPS_ARCH)
@@ -137,4 +137,3 @@ bool validate_addr_section_mips(void *ptr, unsigned size, unsigned max_offset_mb
 #endif /* WIN32 */
 
 #endif /* MMAP_JIT_CACHE */
-
